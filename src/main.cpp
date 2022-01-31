@@ -2,13 +2,15 @@
 #include <Arduino.h>
 #include <U8g2lib.h>
 #include <Wire.h>
+#include <avr/interrupt.h>
+#include <avr/sleep.h>
 
 // --- CONSTANTS ---
 const uint8_t OLED_GND_PIN = MISO;
 const uint8_t SENSOR1_GND_PIN = 9;
-const uint8_t SENSOR1_DATA_PIN = SCK;
+const uint8_t SENSOR1_DATA_PIN = SCK; // PCINT5
 const uint8_t SENSOR2_GND_PIN = 10;
-const uint8_t SENSOR2_DATA_PIN = 2;
+const uint8_t SENSOR2_DATA_PIN = 2; // PCINT18
 const uint8_t BUTTON_1_PIN = A0;
 const uint8_t BUTTON_2_PIN = A1;
 const uint8_t BUTTON_3_PIN = 3;
@@ -29,22 +31,25 @@ bool but2 = true, but2Prev = false;
 bool but3 = true, but3Prev = false;
 bool sensor1 = true, sensor1Prev = false;
 bool sensor2 = true, sensor2Prev = false;
-bool  sens1Triggered = false, sens2Triggered = false, 
-      but1Changed = false, but2Changed = false, but3Changed = false;
+volatile bool sens1Triggered = false, sens2Triggered = false; 
+bool but1Changed = false, but2Changed = false, but3Changed = false;
+bool iAmSleeping = false;
 
 String stringBuffer ;
 int textWidth;
 
-uint32_t tStarted, tResult, tBest = 0;
+volatile uint32_t tStarted, tResult, tBest = 0;
+volatile uint32_t lastInt = 0;
 
 // --- OBJECTS ---
-U8G2_SSD1306_128X32_UNIVISION_1_HW_I2C u8g2(U8G2_R2, /* reset=*/ U8X8_PIN_NONE); 
+U8G2_SSD1306_128X32_UNIVISION_F_HW_I2C u8g2(U8G2_R2, /* reset=*/ U8X8_PIN_NONE); 
 
 // --- PROTOTYPES ---
 void enablePeriphery();
 void disablePeriphery();
 void readButtons();
 void updateDisplay();
+void INT_PINisr(void);
 
 // --------------------------------------------------------------------------
 //                               S E T U P 
@@ -52,22 +57,23 @@ void updateDisplay();
 void setup(void) {
 
   Serial.begin(115200);
-  delay(500);
   Serial.println("\n\nLos gehts...");
 
   enablePeriphery();
   
-  u8g2.begin();
-
-  u8g2.setFont(u8g2_font_logisoso22_tf);
  // u8g2_font_logisoso26_tr u8g2_font_freedoomr25_mn u8g2_font_inr27_mr 
+
+  cli();
+  PCICR |= 0b00000101; // Enables Ports B and D Pin Change Interrupts
+  PCMSK0 |= 0b00100000; // PCINT5
+  PCMSK2 |= 0b00000100; // PCINT18
+  sei();
 }
 
 // --------------------------------------------------------------------------
 //                                L O O P 
 // --------------------------------------------------------------------------
 void loop(void) {
-  static uint32_t t1= millis();
   bool pleaseUpdateDisplay = false;
 
   readButtons();
@@ -79,11 +85,9 @@ void loop(void) {
     if (sens1Triggered){
       sens1Triggered = false;
       myState = STATE_RUNNING;
-      tStarted = millis();
       pleaseUpdateDisplay = true;
     }
     if (but1Changed){
-      but1Changed = false;
       myState = STATE_BEST;
       pleaseUpdateDisplay = true;
     } 
@@ -93,12 +97,10 @@ void loop(void) {
     pleaseUpdateDisplay = true;
     if (sens1Triggered){
       sens1Triggered = false;
-      tStarted = millis();
     }
     if (sens2Triggered){
       sens2Triggered = false;
       myState = STATE_RESULT;
-      tResult = millis() - tStarted;
       if ( ( tResult < tBest ) || ( tBest == 0 ) ) {
         tBest = tResult;
         myState = STATE_BEST;
@@ -115,7 +117,6 @@ void loop(void) {
     if (sens1Triggered){
       sens1Triggered = false;
       myState = STATE_RUNNING;
-      tStarted = millis();
     }
     if (but1Changed){
       but1Changed = false;
@@ -130,11 +131,9 @@ void loop(void) {
     if (sens1Triggered){
       sens1Triggered = false;
       myState = STATE_RUNNING;
-      tStarted = millis();
       pleaseUpdateDisplay = true;
     }
     if (but1Changed){
-      but1Changed = false;
       if (tBest > 0 ){
         myState = STATE_RESULT;
       }
@@ -143,16 +142,34 @@ void loop(void) {
       }
       pleaseUpdateDisplay = true;
     } 
+    if (but2Changed){
+      tBest = 0;
+      pleaseUpdateDisplay = true;
+    } 
   }
-  if (pleaseUpdateDisplay) updateDisplay();
+  if (but3Changed){
+    disablePeriphery();
+    Serial.println("Gute Nacht");
+    Serial.flush();
+    attachInterrupt(1, INT_PINisr, FALLING);
+    set_sleep_mode(SLEEP_MODE_PWR_DOWN);
+    sleep_enable();
+    sleep_mode();
+    sleep_disable(); 
+    Serial.println("Guten Morgen");
+    enablePeriphery();
+    pleaseUpdateDisplay = true;
+  }
+
+  if ( (pleaseUpdateDisplay) )  updateDisplay();
   if (myLastState != myState) Serial.println(myState);
   myLastState = myState;
+  but1Changed = false;
+  but2Changed = false;
+  but3Changed = false;
 
-
-  //Serial.println( String(millis() - t1) + "ms: b1: " + String(but1) + " | b2: " + String(but2) + " | b3: " + String(but3) + " | s1: " + String(sensor1) + " | s2: " + String(sensor2) );
-  
-  t1= millis();
-  //delay(500);
+  //delay(200);
+  //Serial.println("Loop()");
 }
 
 // --------------------------------------------------------------------------
@@ -176,15 +193,14 @@ void enablePeriphery(){
   pinMode(BUTTON_2_PIN, INPUT_PULLUP);
   pinMode(BUTTON_1_PIN, INPUT_PULLUP);
   pinMode(BUTTON_3_PIN, INPUT_PULLUP);  
+
+  u8g2.begin();
+  u8g2.setFont(u8g2_font_logisoso22_tf);
 }
 
 // ++++++++++++++++++++++++++++++++++++++
 void disablePeriphery(){
-  pinMode(SENSOR1_GND_PIN, OUTPUT);
   digitalWrite(SENSOR1_GND_PIN, HIGH);
-
-  pinMode(SENSOR2_GND_PIN, INPUT);
-  pinMode(SENSOR2_GND_PIN, OUTPUT);
   digitalWrite(SENSOR2_GND_PIN, HIGH);
 }
 
@@ -194,8 +210,7 @@ void readButtons(){
   but1      = !digitalRead(BUTTON_1_PIN);
   but2      = !digitalRead(BUTTON_2_PIN);
   but3      = !digitalRead(BUTTON_3_PIN);
-  sensor1   = digitalRead(SENSOR1_DATA_PIN);
-  sensor2   = digitalRead(SENSOR2_DATA_PIN); 
+  
 
   if (but1 != but1Prev){
     but1Prev = but1;
@@ -213,25 +228,11 @@ void readButtons(){
   } 
   if (but3 != but3Prev){
     but3Prev = but3;
-    if ( but3){
+    if ( !but3){
       but3Changed = true;
       Serial.println("but3");
     }
-  } 
-  if (sensor1 != sensor1Prev){
-    sensor1Prev = sensor1;
-    if ( sensor1){
-      sens1Triggered = true;
-      Serial.println("sens1");
-    }
-  } 
-  if (sensor2 != sensor2Prev){
-    sensor2Prev = sensor2;
-    if ( sensor2){
-      sens2Triggered = true;
-      Serial.println("sens2");
-    }
-  } 
+  }  
 }
 
 // ++++++++++++++++++++++++++++++++++++++
@@ -283,4 +284,32 @@ void updateDisplay(){
       u8g2.print(stringBuffer);    
     }while ( u8g2.nextPage() );  
   } 
+}
+
+// ++++++++++++++++++++++++++++++++++++++
+ISR(PCINT0_vect)
+{ 
+  uint32_t currTime = millis();
+  if ( ( currTime - lastInt ) > 100 ){  
+    sens1Triggered = true; 
+    tStarted = currTime;
+    lastInt = currTime;
+  }
+}
+
+// ++++++++++++++++++++++++++++++++++++++
+ISR(PCINT2_vect)
+{
+  uint32_t currTime = millis();
+  if ( ( currTime - lastInt ) > 100 ){  
+    sens2Triggered = true; 
+    tResult = currTime - tStarted;
+    lastInt = currTime;
+  }
+}
+
+// ++++++++++++++++++++++++++++++++++++++
+void INT_PINisr(void)
+{
+  detachInterrupt(1);
 }
