@@ -4,6 +4,8 @@
 #include <Wire.h>
 #include <avr/interrupt.h>
 #include <avr/sleep.h>
+#include <avr/power.h>
+#include <avr/wdt.h>
 
 // --- CONSTANTS ---
 const uint8_t OLED_GND_PIN = MISO;
@@ -15,11 +17,18 @@ const uint8_t BUTTON_1_PIN = A0;
 const uint8_t BUTTON_2_PIN = A1;
 const uint8_t BUTTON_3_PIN = 3;
 
+const uint8_t LED_RED_PIN = 7;
+const uint8_t LED_GREEN_PIN = 6;
+const uint8_t LED_WHITE_PIN = 5;
+
 const uint8_t STATE_NOT_INIT  = 0;
 const uint8_t STATE_READY     = 1;
 const uint8_t STATE_RUNNING   = 2;
 const uint8_t STATE_RESULT    = 3;
 const uint8_t STATE_BEST      = 4;
+
+//const uint32_t MAX_STOPPED_TIME    = 60*1000; // 60 seconds
+const uint32_t SLEEP_TIMER         = 5*60*1000; // 5 minutes
 
 // --- VARIABLES ---
 float timeCode = 0.0;
@@ -34,6 +43,7 @@ bool sensor2 = true, sensor2Prev = false;
 volatile bool sens1Triggered = false, sens2Triggered = false; 
 bool but1Changed = false, but2Changed = false, but3Changed = false;
 bool iAmSleeping = false;
+uint32_t lastActionTS = 0;
 
 String stringBuffer ;
 int textWidth;
@@ -50,14 +60,12 @@ void disablePeriphery();
 void readButtons();
 void updateDisplay();
 void INT_PINisr(void);
-
+void goToSleep();
 // --------------------------------------------------------------------------
 //                               S E T U P 
 // --------------------------------------------------------------------------
 void setup(void) {
 
-  Serial.begin(115200);
-  Serial.println("\n\nLos gehts...");
 
   enablePeriphery();
   
@@ -148,21 +156,24 @@ void loop(void) {
     } 
   }
   if (but3Changed){
-    disablePeriphery();
-    Serial.println("Gute Nacht");
-    Serial.flush();
-    attachInterrupt(1, INT_PINisr, FALLING);
-    set_sleep_mode(SLEEP_MODE_PWR_DOWN);
-    sleep_enable();
-    sleep_mode();
-    sleep_disable(); 
-    Serial.println("Guten Morgen");
-    enablePeriphery();
+    goToSleep();
     pleaseUpdateDisplay = true;
   }
 
-  if ( (pleaseUpdateDisplay) )  updateDisplay();
-  if (myLastState != myState) Serial.println(myState);
+  if (myLastState != myState) {
+    Serial.println(myState);
+    lastActionTS = millis();
+    pleaseUpdateDisplay = true;
+  }
+
+  if ( (millis() - lastActionTS ) > SLEEP_TIMER ) {
+    goToSleep();
+    pleaseUpdateDisplay = true;
+  }
+
+  if ( (pleaseUpdateDisplay) )  {
+    updateDisplay();
+  }
   myLastState = myState;
   but1Changed = false;
   but2Changed = false;
@@ -179,6 +190,10 @@ void loop(void) {
 
 // ++++++++++++++++++++++++++++++++++++++
 void enablePeriphery(){
+  noInterrupts();
+
+  Serial.begin(115200);
+  Serial.println("\n\nLos gehts...");
   // sensor #1
   pinMode(SENSOR1_GND_PIN, OUTPUT);
   digitalWrite(SENSOR1_GND_PIN, LOW);
@@ -190,18 +205,51 @@ void enablePeriphery(){
   pinMode(SENSOR2_DATA_PIN, INPUT_PULLUP);  
 
   // buttons
-  pinMode(BUTTON_2_PIN, INPUT_PULLUP);
   pinMode(BUTTON_1_PIN, INPUT_PULLUP);
+  pinMode(BUTTON_2_PIN, INPUT_PULLUP);
   pinMode(BUTTON_3_PIN, INPUT_PULLUP);  
 
+  pinMode(LED_GREEN_PIN, OUTPUT);
+  analogWrite(LED_GREEN_PIN, 30);
+  digitalWrite(LED_GREEN_PIN, HIGH);
+  
+  delay(500);
+
+  interrupts();
   u8g2.begin();
   u8g2.setFont(u8g2_font_logisoso22_tf);
+
+  lastActionTS = millis();
 }
 
 // ++++++++++++++++++++++++++++++++++++++
 void disablePeriphery(){
-  digitalWrite(SENSOR1_GND_PIN, HIGH);
+
+  pinMode(SENSOR1_GND_PIN, INPUT);
+  pinMode(SENSOR2_GND_PIN, INPUT);
+  pinMode(LED_GREEN_PIN, INPUT);
+  pinMode(LED_RED_PIN, INPUT);
+  pinMode(LED_WHITE_PIN, INPUT);
+  pinMode(BUTTON_1_PIN, INPUT);
+  pinMode(BUTTON_2_PIN, INPUT); 
+/* 
+digitalWrite(SENSOR1_GND_PIN, HIGH);
   digitalWrite(SENSOR2_GND_PIN, HIGH);
+
+  pinMode(LED_GREEN_PIN, LOW);
+  pinMode(LED_RED_PIN, LOW);
+  pinMode(LED_WHITE_PIN, LOW);
+// bringt nix
+  pinMode(0, INPUT_PULLUP);
+  pinMode(1, INPUT_PULLUP);
+
+  pinMode(MISO, INPUT_PULLUP);
+  pinMode(MOSI, INPUT_PULLUP);
+  pinMode(SCK, INPUT_PULLUP);
+  pinMode(8, INPUT_PULLUP);
+  pinMode(4, INPUT_PULLUP);
+  pinMode(A2, INPUT_PULLUP);
+  pinMode(A3, INPUT_PULLUP); */
 }
 
 // ++++++++++++++++++++++++++++++++++++++
@@ -242,8 +290,8 @@ void updateDisplay(){
     do {
       u8g2.drawHLine(0,31,128);
       u8g2.drawHLine(0,0,128);
-      u8g2.setCursor( 0 , 29 );
-      u8g2.print("R E A D Y ...");
+      u8g2.setCursor( 20 , 27 );
+      u8g2.print("BEREIT!");
     } while ( u8g2.nextPage() );
   }
   else if ( myState == STATE_RUNNING ) {
@@ -287,11 +335,34 @@ void updateDisplay(){
 }
 
 // ++++++++++++++++++++++++++++++++++++++
+void goToSleep(){
+  disablePeriphery();
+  Serial.println("Gute Nacht");
+  Serial.flush();    
+  ADCSRA &= ~(1 << ADEN);
+  sleep_bod_disable();
+  wdt_disable();
+  attachInterrupt(1, INT_PINisr, FALLING);
+  set_sleep_mode(SLEEP_MODE_PWR_DOWN);
+  sleep_enable();
+  sleep_mode();
+  sleep_disable(); 
+  power_all_enable();
+  Serial.println("Guten Morgen");
+  detachInterrupt(1);
+  enablePeriphery();
+  myState = STATE_READY;
+  sens1Triggered = false;
+  sens2Triggered = false;
+}
+
+// ++++++++++++++++++++++++++++++++++++++
 ISR(PCINT0_vect)
 { 
   uint32_t currTime = millis();
   if ( ( currTime - lastInt ) > 100 ){  
     sens1Triggered = true; 
+    sens2Triggered = false; 
     tStarted = currTime;
     lastInt = currTime;
   }
@@ -311,5 +382,5 @@ ISR(PCINT2_vect)
 // ++++++++++++++++++++++++++++++++++++++
 void INT_PINisr(void)
 {
-  detachInterrupt(1);
+
 }
