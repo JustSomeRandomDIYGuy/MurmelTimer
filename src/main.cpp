@@ -27,8 +27,7 @@ const uint8_t STATE_RUNNING   = 2;
 const uint8_t STATE_RESULT    = 3;
 const uint8_t STATE_BEST      = 4;
 
-//const uint32_t MAX_STOPPED_TIME    = 60*1000; // 60 seconds
-const uint32_t SLEEP_TIMER         = 5*60*1000; // 5 minutes
+const uint32_t SLEEP_TIMER         = 300000ul;//300000ul; // 5 minutes
 
 // --- VARIABLES ---
 float timeCode = 0.0;
@@ -105,6 +104,7 @@ void loop(void) {
     pleaseUpdateDisplay = true;
     if (sens1Triggered){
       sens1Triggered = false;
+      lastActionTS = millis();
     }
     if (sens2Triggered){
       sens2Triggered = false;
@@ -217,7 +217,7 @@ void enablePeriphery(){
 
   interrupts();
   u8g2.begin();
-  u8g2.setFont(u8g2_font_logisoso22_tf);
+  u8g2.setFont(u8g2_font_logisoso24_tf);
 
   lastActionTS = millis();
 }
@@ -225,20 +225,20 @@ void enablePeriphery(){
 // ++++++++++++++++++++++++++++++++++++++
 void disablePeriphery(){
 
-  pinMode(SENSOR1_GND_PIN, INPUT);
+  digitalWrite(SENSOR1_GND_PIN, HIGH);
+  digitalWrite(SENSOR2_GND_PIN, HIGH);
+  pinMode(LED_GREEN_PIN, LOW);
+  pinMode(LED_RED_PIN, LOW);
+  pinMode(LED_WHITE_PIN, LOW);
+  
+/* 
+pinMode(SENSOR1_GND_PIN, INPUT);
   pinMode(SENSOR2_GND_PIN, INPUT);
   pinMode(LED_GREEN_PIN, INPUT);
   pinMode(LED_RED_PIN, INPUT);
   pinMode(LED_WHITE_PIN, INPUT);
   pinMode(BUTTON_1_PIN, INPUT);
   pinMode(BUTTON_2_PIN, INPUT); 
-/* 
-digitalWrite(SENSOR1_GND_PIN, HIGH);
-  digitalWrite(SENSOR2_GND_PIN, HIGH);
-
-  pinMode(LED_GREEN_PIN, LOW);
-  pinMode(LED_RED_PIN, LOW);
-  pinMode(LED_WHITE_PIN, LOW);
 // bringt nix
   pinMode(0, INPUT_PULLUP);
   pinMode(1, INPUT_PULLUP);
@@ -290,8 +290,8 @@ void updateDisplay(){
     do {
       u8g2.drawHLine(0,31,128);
       u8g2.drawHLine(0,0,128);
-      u8g2.setCursor( 20 , 27 );
-      u8g2.print("BEREIT!");
+      u8g2.setCursor( 20 , 29 );
+      u8g2.print("BEREIT");
     } while ( u8g2.nextPage() );
   }
   else if ( myState == STATE_RUNNING ) {
@@ -303,7 +303,7 @@ void updateDisplay(){
     
     u8g2.firstPage();
     do {      
-      u8g2.setCursor( 127 - textWidth , 29 );
+      u8g2.setCursor( 127 - textWidth + 2 , 28 );
       u8g2.print(stringBuffer);    
     } while ( u8g2.nextPage() );   
   }
@@ -315,7 +315,7 @@ void updateDisplay(){
     
     u8g2.firstPage();
     do {      
-      u8g2.setCursor( 127 - textWidth , 29 );
+      u8g2.setCursor( 127 - textWidth +2 , 28 );
       u8g2.print(stringBuffer);    
     }while ( u8g2.nextPage() );  
   } 
@@ -328,7 +328,7 @@ void updateDisplay(){
     u8g2.firstPage();
     do {      
       u8g2.drawRFrame(0,0,128,32,4);
-      u8g2.setCursor( 127 - textWidth , 29 );
+      u8g2.setCursor( 127 - textWidth , 28 );
       u8g2.print(stringBuffer);    
     }while ( u8g2.nextPage() );  
   } 
