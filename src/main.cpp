@@ -27,7 +27,7 @@ const uint8_t STATE_RUNNING   = 2;
 const uint8_t STATE_RESULT    = 3;
 const uint8_t STATE_BEST      = 4;
 
-const uint32_t SLEEP_TIMER         = 300000ul;//300000ul; // 5 minutes
+const uint32_t SLEEP_TIMER         = 100000ul;
 
 // --- VARIABLES ---
 float timeCode = 0.0;
@@ -68,6 +68,7 @@ void setup(void) {
 
   enablePeriphery();
   
+  
  // u8g2_font_logisoso26_tr u8g2_font_freedoomr25_mn u8g2_font_inr27_mr 
 
   cli();
@@ -81,6 +82,7 @@ void setup(void) {
 //                                L O O P 
 // --------------------------------------------------------------------------
 void loop(void) {
+  static uint32_t timeCodeLoop = millis();
   bool pleaseUpdateDisplay = false;
 
   readButtons();
@@ -179,6 +181,8 @@ void loop(void) {
   but2Changed = false;
   but3Changed = false;
 
+  while( ( millis() - timeCodeLoop) < 50);    
+  timeCodeLoop = millis();
   //delay(200);
   //Serial.println("Loop()");
 }
@@ -194,6 +198,7 @@ void enablePeriphery(){
 
   Serial.begin(115200);
   Serial.println("\n\nLos gehts...");
+  
   // sensor #1
   pinMode(SENSOR1_GND_PIN, OUTPUT);
   digitalWrite(SENSOR1_GND_PIN, LOW);
